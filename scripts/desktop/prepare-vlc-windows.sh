@@ -10,9 +10,9 @@ vlc_dir=$root_dir/apps/multiplatform/common/src/commonMain/cpp/desktop/libs/wind
 rm -rf $vlc_dir
 mkdir -p $vlc_dir/vlc || exit 0
 
-vlc_tag='v3.0.23-2'
-vlc_url="https://github.com/simplex-chat/vlc/releases/download/${vlc_tag}/vlc-win-x86_64.zip"
-vlc_sha256='09993fc4e6bf8239cf847f943ae593dd62ba9abbe5f2f18c42bfca1bc9e94443'
+vlc_tag='v3.0.24-1-sh.6'
+vlc_url="https://github.com/simplex-sh/vlc/releases/download/${vlc_tag}/vlc-win-x86_64.zip"
+vlc_sha256='bfb24deee6f6e815597d5c0b0dfb4992bf11b72d1d2136635cfc0b0b6c75ea01'
 
 cd /tmp
 mkdir tmp 2>/dev/null || true
