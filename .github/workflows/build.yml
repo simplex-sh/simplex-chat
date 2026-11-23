@@ -1578,7 +1578,7 @@ jobs:
           - os: ubuntu-22.04
             libs: linux-x86_64
             prepare: scripts/desktop/prepare-vlc-linux.sh
-            checks: audio
+            checks: check audio
           - os: macos-latest
             libs: mac-aarch64
             prepare: scripts/desktop/prepare-vlc-mac.sh
