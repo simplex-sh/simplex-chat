@@ -10,11 +10,11 @@ else
     vlc_arch=intel64
 fi
 
-vlc_tag='v3.0.23-2'
-vlc_url="https://github.com/simplex-chat/vlc/releases/download/${vlc_tag}/vlc-macos-${ARCH}.zip"
+vlc_tag='v3.0.24-1-sh.6'
+vlc_url="https://github.com/simplex-sh/vlc/releases/download/${vlc_tag}/vlc-macos-${ARCH}.zip"
 case "$ARCH" in
-  aarch64) vlc_sha256='ee537e339b4b40546dc9374db4a2e74eeb46d4b76fb7f23b201e7beb144decb8' ;;
-  x86_64) vlc_sha256='a4a782b8d2f5475ae7a7dda84a2ba4989d415cd4c0a7d19c68e75a90920a0d6b' ;;
+  aarch64) vlc_sha256='6d52bdbd46257b3a4f063fe56327afae7416a9a97ecd7f4f66cc4699013422c0' ;;
+  x86_64) vlc_sha256='d3eabe22c89cd552c09542663ab090312317ee729b503ef50b66bd99361b95fc' ;;
 esac
 
 function readlink() {

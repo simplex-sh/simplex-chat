@@ -12,11 +12,11 @@ vlc_dir=$root_dir/apps/multiplatform/common/src/commonMain/cpp/desktop/libs/linu
 
 mkdir $vlc_dir || exit 0
 
-vlc_tag='v3.0.23-2'
-vlc_url="https://github.com/simplex-chat/vlc/releases/download/${vlc_tag}/vlc-linux-${ARCH}.appimage"
+vlc_tag='v3.0.24-1-sh.6'
+vlc_url="https://github.com/simplex-sh/vlc/releases/download/${vlc_tag}/vlc-linux-${ARCH}.appimage"
 case "$ARCH" in
-  x86_64) vlc_sha256='594fc3a603167a977cc0de519e1d5f785037df0db60c57518f88e46606d5bb98' ;;
-  aarch64) vlc_sha256='697e3d1d0eaad0729529826021fd78b10eee411ba413866c5ab24ac4ac754ba4' ;;
+  x86_64) vlc_sha256='5b3b6f52f68617c6b67488f90ff6508805fa8ff13de0a4078348302313adfc06' ;;
+  aarch64) vlc_sha256='6c00f9b56e5debdde72f14c0e4331fbab1fce67cbe1b8fb8a87804a2de1f261c' ;;
 esac
 
 cd /tmp
