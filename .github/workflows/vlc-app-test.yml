@@ -85,6 +85,7 @@ jobs:
           case "$RUNNER_OS" in
             Linux)
               sudo apt-get update
+              sudo mkdir -p /usr/share/applications /usr/share/desktop-directories
               sudo apt-get install -y "$asset" xvfb
               bin=$(dpkg -L simplex | grep '/bin/simplex$')
               ;;
