@@ -145,6 +145,27 @@ jobs:
             codesign --force --deep --sign - "$RUNNER_TEMP/SimpleX.app"
           fi
 
+      - name: Diagnose libVLC startup on Linux
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        continue-on-error: true
+        run: |
+          echo "paths in libvlccore:"
+          strings -n 6 "$APP_VLC"/libvlccore.so.9 | grep -E '^/[A-Za-z0-9_./-]*(lib|vlc|plugins)' | sort -u | head -n 20
+          ls -d "$APP_VLC"/vlc/plugins "$APP_VLC"/plugins 2>&1 || true
+          cat > "$RUNNER_TEMP/new.py" <<'EOF'
+          import ctypes, sys
+          libvlc = ctypes.CDLL(sys.argv[1] + "/libvlc.so")
+          libvlc.libvlc_new.restype = ctypes.c_void_p
+          argv = (ctypes.c_char_p * 1)(b"--verbose=2")
+          print("libvlc_new:", libvlc.libvlc_new(1, argv), flush=True)
+          EOF
+          echo "python, VLC_PLUGIN_PATH unset:"
+          python3 "$RUNNER_TEMP/new.py" "$APP_VLC" 2>&1 | grep -vE "option .* does not exist" | head -n 30
+          echo "python, VLC_PLUGIN_PATH=$APP_VLC/vlc/plugins:"
+          VLC_PLUGIN_PATH="$APP_VLC/vlc/plugins" python3 "$RUNNER_TEMP/new.py" "$APP_VLC" 2>&1 | grep -vE "option .* does not exist" | head -n 30
+          echo "java, VLC_PLUGIN_PATH=$APP_VLC/vlc/plugins:"
+          VLC_PLUGIN_PATH="$APP_VLC/vlc/plugins" java -Djna.debug_load=true -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/h264.mp4 2>&1 | grep -vE "option .* does not exist|ALSA|audio output" | head -n 60
+
       - name: Play the test media with the app's vlcj and VLC
         if: ${{ !cancelled() }}
         run: java -Dvlc.args=--verbose=1 -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
