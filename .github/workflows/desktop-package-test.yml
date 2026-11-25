@@ -138,7 +138,7 @@ jobs:
       - name: Send and play a video in the packaged app's UI
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: |
-          sudo apt-get install -y xdotool openbox imagemagick tesseract-ocr sqlite3 fonts-dejavu-core ffmpeg
+          scripts/ci/vlc-app-test/ui-tools.sh
           scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$BRANCH_APP_BIN")")" "$RUNNER_TEMP/smoke-test"
 
       - uses: actions/upload-artifact@v7
@@ -149,4 +149,31 @@ jobs:
             ${{ runner.temp }}/*.log
             ${{ runner.temp }}/*.png
             ${{ runner.temp }}/smoke-test
+          if-no-files-found: ignore
+
+  released-ui:
+    name: ubuntu-22.04 released app UI
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Install the released app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$APP_RELEASE" -R simplex-chat/simplex-chat -p simplex-desktop-ubuntu-22_04-x86_64.deb -D "$RUNNER_TEMP/release"
+          scripts/ci/vlc-app-test/unpack-app.sh "$RUNNER_TEMP/release/simplex-desktop-ubuntu-22_04-x86_64.deb" "$RUNNER_TEMP/released" install
+
+      - name: Send and play a video in the released app's UI
+        run: |
+          scripts/ci/vlc-app-test/ui-tools.sh
+          scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$(cat "$RUNNER_TEMP/released/bin")")")" "$RUNNER_TEMP/smoke-test"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: results-released-ui
+          path: ${{ runner.temp }}/smoke-test
           if-no-files-found: ignore

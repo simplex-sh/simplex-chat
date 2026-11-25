@@ -408,9 +408,12 @@ play_video() {
   "$ui" click "$video_x" "$video_y"
   sleep 2
   "$ui" shot video-playing-1
-  sleep 1
+  sleep 2
   "$ui" shot video-playing-2
-  check "mp4: the sent video plays in the chat" chat_changed video-playing-1 video-playing-2
+  sleep 2
+  "$ui" shot video-playing-3
+  check "mp4: the sent video plays in the chat from 2 to 4 s" chat_changed video-playing-1 video-playing-2
+  check "mp4: the sent video plays in the chat from 4 to 6 s" chat_changed video-playing-2 video-playing-3
 }
 
 send_images() {
