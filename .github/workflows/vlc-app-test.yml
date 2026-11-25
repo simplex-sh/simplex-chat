@@ -139,41 +139,42 @@ jobs:
           fi
 
       - name: Play the test media with the app's vlcj and VLC
+        if: ${{ !cancelled() }}
         run: java -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
 
-      - name: Start the app
+      - name: Start the released app
+        if: ${{ !cancelled() }}
+        run: scripts/ci/vlc-app-test/start-app.sh "$APP_BIN" released-app
+
+      - name: Build the app of this branch with the released libraries
+        id: build
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         run: |
-          log="$RUNNER_TEMP/app.log"
-          if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a -s "-screen 0 1440x900x24" "$APP_BIN" > "$log" 2>&1 &
-          else
-            "$APP_BIN" > "$log" 2>&1 &
-          fi
-          pid=$!
-          sleep 40
-          alive=0
-          kill -0 "$pid" 2>/dev/null && alive=1
-          case "$RUNNER_OS" in
-            macOS) screencapture -x "$RUNNER_TEMP/screen.png" || true ;;
-            Windows) powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \$i=New-Object System.Drawing.Bitmap \$b.Width,\$b.Height; [System.Drawing.Graphics]::FromImage(\$i).CopyFromScreen(\$b.Location,[System.Drawing.Point]::Empty,\$b.Size); \$i.Save('$(cygpath -w "$RUNNER_TEMP/screen.png")')" || true ;;
-          esac
-          kill "$pid" 2>/dev/null || true
-          taskkill //F //IM SimpleX.exe 2>/dev/null || true
-          echo "::group::app log"
-          cat "$log"
-          echo "::endgroup::"
-          if grep -E "UnsatisfiedLinkError|Exception in thread|startup error" "$log"; then
-            echo "the app logged an error"
-            exit 1
-          fi
-          [ "$alive" = 1 ] || { echo "the app exited within 40 s"; exit 1; }
-          echo "the app ran for 40 s"
+          libs=apps/multiplatform/common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}
+          find "$APP_JARS/resources" -maxdepth 1 -type f -exec cp {} "$libs/" \;
+          ls "$libs" "$libs/vlc"
+          mkdir -p apps/multiplatform/build/links
+          cp -R "$libs" apps/multiplatform/build/links/windows-x64
+          cd apps/multiplatform
+          ./gradlew --no-daemon --console=plain -Psimplex.assets.dir=../../assets -Pkotlin.daemon.jvmargs=-Xmx4g :desktop:createDistributable -x :desktop:cmakeBuildAndCopy
+          bin=$(find "$PWD/release/main/app" -name SimpleX.exe | head -n 1)
+          ls "$(dirname "$bin")/app/resources" "$(dirname "$bin")/app/resources/vlc"
+          echo "BRANCH_APP_BIN=$bin" >> "$GITHUB_ENV"
+          echo "BRANCH_APP_JARS=$(dirname "$bin")/app" >> "$GITHUB_ENV"
+
+      - name: Play the test media with the vlcj and VLC of the app of this branch
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: java -cp "$BRANCH_APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$BRANCH_APP_JARS/resources/vlc" "$RUNNER_TEMP"/media/*
+
+      - name: Start the app of this branch
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: scripts/ci/vlc-app-test/start-app.sh "$BRANCH_APP_BIN" branch-app
 
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: app-${{ matrix.os }}
           path: |
-            ${{ runner.temp }}/app.log
-            ${{ runner.temp }}/screen.png
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/*.png
           if-no-files-found: ignore
