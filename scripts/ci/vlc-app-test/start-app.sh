@@ -24,6 +24,10 @@ case "$RUNNER_OS" in
     ;;
 esac
 kill "$pid" 2>/dev/null || true
+if [ "$RUNNER_OS" = Linux ]; then
+  pkill -f "$bin" 2>/dev/null || true
+  pkill Xvfb 2>/dev/null || true
+fi
 if [ "$RUNNER_OS" = Windows ]; then
   taskkill //F //IM SimpleX.exe 2>/dev/null || true
 fi

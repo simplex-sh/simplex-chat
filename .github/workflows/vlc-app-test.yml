@@ -63,7 +63,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           persist-credentials: false
-          submodules: ${{ runner.os == 'Windows' && 'recursive' || 'false' }}
+          submodules: ${{ (runner.os == 'Windows' || matrix.os == 'ubuntu-24.04') && 'recursive' || 'false' }}
 
       - uses: actions/setup-java@v5
         with:
@@ -132,6 +132,9 @@ jobs:
           echo "VLC files of this branch:"
           ls "$new"
           find "$new" -name '*_plugin*' | wc -l
+          if [ "$RUNNER_OS" = Linux ]; then
+            stat -c '%a %U %n' "$new" "$new/vlc" "$new/vlc/plugins" "$new/vlc/plugins/codec" "$new/libvlc.so.5.6.1"
+          fi
           sudo=""
           [ "$RUNNER_OS" = Linux ] && sudo=sudo
           $sudo mv "$APP_VLC" "$RUNNER_TEMP/released-vlc"
@@ -145,27 +148,6 @@ jobs:
             codesign --force --deep --sign - "$RUNNER_TEMP/SimpleX.app"
           fi
 
-      - name: Diagnose libVLC startup on Linux
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
-        continue-on-error: true
-        run: |
-          echo "paths in libvlccore:"
-          strings -n 6 "$APP_VLC"/libvlccore.so.9 | grep -E '^/[A-Za-z0-9_./-]*(lib|vlc|plugins)' | sort -u | head -n 20
-          ls -d "$APP_VLC"/vlc/plugins "$APP_VLC"/plugins 2>&1 || true
-          cat > "$RUNNER_TEMP/new.py" <<'EOF'
-          import ctypes, sys
-          libvlc = ctypes.CDLL(sys.argv[1] + "/libvlc.so")
-          libvlc.libvlc_new.restype = ctypes.c_void_p
-          argv = (ctypes.c_char_p * 1)(b"--verbose=2")
-          print("libvlc_new:", libvlc.libvlc_new(1, argv), flush=True)
-          EOF
-          echo "python, VLC_PLUGIN_PATH unset:"
-          python3 "$RUNNER_TEMP/new.py" "$APP_VLC" 2>&1 | grep -vE "option .* does not exist" | head -n 30
-          echo "python, VLC_PLUGIN_PATH=$APP_VLC/vlc/plugins:"
-          VLC_PLUGIN_PATH="$APP_VLC/vlc/plugins" python3 "$RUNNER_TEMP/new.py" "$APP_VLC" 2>&1 | grep -vE "option .* does not exist" | head -n 30
-          echo "java, VLC_PLUGIN_PATH=$APP_VLC/vlc/plugins:"
-          VLC_PLUGIN_PATH="$APP_VLC/vlc/plugins" java -Djna.debug_load=true -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/h264.mp4 2>&1 | grep -vE "option .* does not exist|ALSA|audio output" | head -n 60
-
       - name: Play the test media with the app's vlcj and VLC
         if: ${{ !cancelled() }}
         run: java -Dvlc.args=--verbose=1 -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
@@ -174,34 +156,32 @@ jobs:
         if: ${{ !cancelled() }}
         run: scripts/ci/vlc-app-test/start-app.sh "$APP_BIN" released-app
 
-      - name: Send and play a video in the released app's UI
-        if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
-        run: |
-          sudo apt-get install -y xdotool openbox imagemagick tesseract-ocr sqlite3 fonts-dejavu-core ffmpeg
-          scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$APP_BIN")")" "$RUNNER_TEMP/smoke-test"
-
-      - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
-        with:
-          name: smoke-test
-          path: ${{ runner.temp }}/smoke-test
-          if-no-files-found: ignore
-
       - name: Build the app of this branch with the released libraries
         id: build
-        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        if: ${{ !cancelled() && (runner.os == 'Windows' || matrix.os == 'ubuntu-24.04') }}
         run: |
           libs=apps/multiplatform/common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}
-          find "$APP_JARS/resources" -maxdepth 1 -type f -exec cp {} "$libs/" \;
+          find "$APP_JARS/resources" -maxdepth 1 \( -type f -o -type l \) -exec cp -P {} "$libs/" \;
           ls "$libs" "$libs/vlc"
           mkdir -p apps/multiplatform/build/links
-          cp -R "$libs" apps/multiplatform/build/links/windows-x64
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp -R "$libs" apps/multiplatform/build/links/windows-x64
+          else
+            ln -sfT ../../common/src/commonMain/cpp/desktop/libs/linux-x86_64/ apps/multiplatform/build/links/linux-x64
+          fi
           cd apps/multiplatform
           ./gradlew --no-daemon --console=plain -Psimplex.assets.dir=../../assets -Pkotlin.daemon.jvmargs=-Xmx4g :desktop:createDistributable -x :desktop:cmakeBuildAndCopy
-          bin=$(find "$PWD/release/main/app" -name SimpleX.exe | head -n 1)
-          ls "$(dirname "$bin")/app/resources" "$(dirname "$bin")/app/resources/vlc"
+          if [ "$RUNNER_OS" = Windows ]; then
+            bin=$(cygpath -m "$(find "$PWD/release/main/app" -name SimpleX.exe | head -n 1)")
+            jars=$(dirname "$bin")/app
+          else
+            bin="$PWD/release/main/app/simplex/bin/simplex"
+            jars="$PWD/release/main/app/simplex/lib/app"
+            stat -c '%a %U %n' "$jars/resources/vlc" "$jars/resources/vlc/vlc" "$jars/resources/vlc/vlc/plugins" "$jars/resources/vlc/vlc/plugins/codec"
+          fi
+          ls "$jars/resources" "$jars/resources/vlc"
           echo "BRANCH_APP_BIN=$bin" >> "$GITHUB_ENV"
-          echo "BRANCH_APP_JARS=$(dirname "$bin")/app" >> "$GITHUB_ENV"
+          echo "BRANCH_APP_JARS=$jars" >> "$GITHUB_ENV"
 
       - name: Play the test media with the vlcj and VLC of the app of this branch
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
@@ -210,6 +190,19 @@ jobs:
       - name: Start the app of this branch
         if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         run: scripts/ci/vlc-app-test/start-app.sh "$BRANCH_APP_BIN" branch-app
+
+      - name: Send and play a video in the UI of the app of this branch
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && runner.os == 'Linux' }}
+        run: |
+          sudo apt-get install -y xdotool openbox imagemagick tesseract-ocr sqlite3 fonts-dejavu-core ffmpeg
+          scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$BRANCH_APP_BIN")")" "$RUNNER_TEMP/smoke-test"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && runner.os == 'Linux' }}
+        with:
+          name: smoke-test
+          path: ${{ runner.temp }}/smoke-test
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v7
         if: always()
