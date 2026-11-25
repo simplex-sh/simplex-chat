@@ -1,0 +1,176 @@
+name: vlc-app-test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  APP_RELEASE: v7.1.4
+
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Make test media
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          mkdir media
+          src="-f lavfi -i testsrc2=size=640x360:rate=25:duration=5 -f lavfi -i sine=frequency=440:duration=5"
+          ffmpeg -loglevel error $src -c:v libx264 -pix_fmt yuv420p -c:a aac media/h264.mp4
+          ffmpeg -loglevel error $src -c:v libx264 -pix_fmt yuv420p -c:a aac media/h264.mov
+          ffmpeg -loglevel error $src -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus media/vp9.webm
+          ffmpeg -loglevel error $src -c:v libx264 -pix_fmt yuv420p -c:a ac3 media/h264.mkv
+          ls -l media
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: media
+          path: media
+
+  app:
+    needs: media
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: simplex-desktop-ubuntu-22_04-x86_64.deb
+            libs: linux-x86_64
+          - os: ubuntu-24.04
+            asset: simplex-desktop-ubuntu-24_04-x86_64.deb
+            libs: linux-x86_64
+          - os: macos-latest
+            asset: simplex-desktop-macos-aarch64.dmg
+            libs: mac-aarch64
+          - os: macos-15-intel
+            asset: simplex-desktop-macos-x86_64.dmg
+            libs: mac-x86_64
+          - os: windows-latest
+            asset: simplex-desktop-windows-x86_64.msi
+            libs: windows-x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: media
+          path: ${{ runner.temp }}/media
+
+      - name: Download the released app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "$APP_RELEASE" -R simplex-chat/simplex-chat -p "${{ matrix.asset }}" -D "$RUNNER_TEMP"
+
+      - name: Install the released app
+        run: |
+          asset="$RUNNER_TEMP/${{ matrix.asset }}"
+          case "$RUNNER_OS" in
+            Linux)
+              sudo apt-get update
+              sudo apt-get install -y "$asset" xvfb
+              bin=$(dpkg -L simplex | grep '/bin/simplex$')
+              ;;
+            macOS)
+              hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$asset"
+              cp -R "$RUNNER_TEMP/dmg/SimpleX.app" "$RUNNER_TEMP/"
+              hdiutil detach "$RUNNER_TEMP/dmg"
+              bin="$RUNNER_TEMP/SimpleX.app/Contents/MacOS/SimpleX"
+              ;;
+            Windows)
+              powershell -NoProfile -Command "Start-Process msiexec -Wait -ArgumentList '/a','$(cygpath -w "$asset")','/qn','TARGETDIR=$(cygpath -w "$RUNNER_TEMP/msi")'"
+              bin=$(find "$RUNNER_TEMP/msi" -name SimpleX.exe | head -n 1)
+              ;;
+          esac
+          app=$(dirname "$(find "$(dirname "$(dirname "$bin")")" -name 'vlcj-[0-9]*.jar' | head -n 1)")
+          echo "APP_BIN=$bin" >> "$GITHUB_ENV"
+          echo "APP_JARS=$app" >> "$GITHUB_ENV"
+          echo "APP_VLC=$app/resources/vlc" >> "$GITHUB_ENV"
+          echo "app: $bin, jars and resources: $app"
+          ls "$app"/vlcj* "$app"/jna*
+          echo "released VLC files:"
+          ls "$app/resources/vlc"
+          find "$app/resources/vlc" -name '*_plugin*' | wc -l
+
+      - name: Prepare VLC of this branch
+        run: |
+          mkdir -p apps/multiplatform/common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}
+          scripts/desktop/prepare-vlc-${RUNNER_OS,,}.sh
+        if: runner.os != 'macOS'
+
+      - name: Prepare VLC of this branch (macOS)
+        run: scripts/desktop/prepare-vlc-mac.sh
+        if: runner.os == 'macOS'
+
+      - name: Put VLC of this branch into the app
+        run: |
+          new=apps/multiplatform/common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}/vlc
+          echo "VLC files of this branch:"
+          ls "$new"
+          find "$new" -name '*_plugin*' | wc -l
+          sudo=""
+          [ "$RUNNER_OS" = Linux ] && sudo=sudo
+          $sudo mv "$APP_VLC" "$RUNNER_TEMP/released-vlc"
+          $sudo cp -R "$new" "$APP_VLC"
+          if [ "$RUNNER_OS" = Windows ]; then
+            for dll in axvlc.dll npvlc.dll; do
+              [ -e "$APP_VLC/$dll" ] || cp "$RUNNER_TEMP/released-vlc/$dll" "$APP_VLC/"
+            done
+          fi
+          if [ "$RUNNER_OS" = macOS ]; then
+            codesign --force --deep --sign - "$RUNNER_TEMP/SimpleX.app"
+          fi
+
+      - name: Play the test media with the app's vlcj and VLC
+        run: java -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
+
+      - name: Start the app
+        run: |
+          log="$RUNNER_TEMP/app.log"
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a -s "-screen 0 1440x900x24" "$APP_BIN" > "$log" 2>&1 &
+          else
+            "$APP_BIN" > "$log" 2>&1 &
+          fi
+          pid=$!
+          sleep 40
+          alive=0
+          kill -0 "$pid" 2>/dev/null && alive=1
+          case "$RUNNER_OS" in
+            macOS) screencapture -x "$RUNNER_TEMP/screen.png" || true ;;
+            Windows) powershell -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms,System.Drawing; \$b=[System.Windows.Forms.Screen]::PrimaryScreen.Bounds; \$i=New-Object System.Drawing.Bitmap \$b.Width,\$b.Height; [System.Drawing.Graphics]::FromImage(\$i).CopyFromScreen(\$b.Location,[System.Drawing.Point]::Empty,\$b.Size); \$i.Save('$(cygpath -w "$RUNNER_TEMP/screen.png")')" || true ;;
+          esac
+          kill "$pid" 2>/dev/null || true
+          taskkill //F //IM SimpleX.exe 2>/dev/null || true
+          echo "::group::app log"
+          cat "$log"
+          echo "::endgroup::"
+          if grep -E "UnsatisfiedLinkError|Exception in thread|startup error" "$log"; then
+            echo "the app logged an error"
+            exit 1
+          fi
+          [ "$alive" = 1 ] || { echo "the app exited within 40 s"; exit 1; }
+          echo "the app ran for 40 s"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: app-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/app.log
+            ${{ runner.temp }}/screen.png
+          if-no-files-found: ignore
