@@ -2,6 +2,9 @@ name: vlc-app-test
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - sh/vlc-3.0.24-app-test
 
 permissions:
   contents: read
