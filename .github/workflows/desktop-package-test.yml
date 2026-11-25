@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches:
-      - sh/vlc-3.0.24-mac-dmg
+      - sh/vlc-quiet-test
 
 permissions:
   contents: read
@@ -40,11 +40,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest
-            asset: simplex-desktop-macos-aarch64.dmg
-            libs: mac-aarch64
-            links: macos-arm64
-            task: packageDmg
+          - os: ubuntu-22.04
+            asset: simplex-desktop-ubuntu-22_04-x86_64.deb
+            libs: linux-x86_64
+            links: linux-x64
+            task: packageDeb
     defaults:
       run:
         shell: bash
@@ -101,13 +101,6 @@ jobs:
         working-directory: apps/multiplatform
         run: ./gradlew --no-daemon --console=plain -Psimplex.assets.dir=../../assets -Pkotlin.daemon.jvmargs=-Xmx4g ${{ matrix.task }} -x :desktop:cmakeBuildAndCopy
 
-      - uses: actions/upload-artifact@v7
-        with:
-          name: simplex-desktop-macos-aarch64-vlc-3.0.24
-          path: apps/multiplatform/release/main/dmg/*.dmg
-          compression-level: 0
-          retention-days: 14
-          if-no-files-found: error
 
       - name: Install the package
         run: |
@@ -133,6 +126,16 @@ jobs:
         run: |
           scripts/ci/vlc-app-test/ui-tools.sh
           scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$BRANCH_APP_BIN")")" "$RUNNER_TEMP/smoke-test"
+
+      - name: Count VLC and FFmpeg lines in the app log
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          log="$RUNNER_TEMP/smoke-test/app.log"
+          vlc=$(grep -cE '^\[[0-9a-f]{16}\] ' "$log" || true)
+          ffmpeg=$(grep -cE '^\[[a-z0-9_]+ @ 0x[0-9a-f]+\] ' "$log" || true)
+          echo "app log: $(wc -l < "$log") lines, $vlc from libVLC, $ffmpeg from FFmpeg"
+          grep -E '^\[[0-9a-f]{16}\] |^\[[a-z0-9_]+ @ 0x' "$log" | head -n 20 || true
+          [ "$vlc" -eq 0 ] && [ "$ffmpeg" -eq 0 ]
 
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
