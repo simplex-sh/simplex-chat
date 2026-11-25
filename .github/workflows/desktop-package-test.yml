@@ -1,0 +1,152 @@
+name: desktop-package-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - sh/vlc-3.0.24-app-test
+
+permissions:
+  contents: read
+
+env:
+  APP_RELEASE: v7.1.4
+
+jobs:
+  media:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Make test media
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          mkdir media
+          src="-f lavfi -i testsrc2=size=640x360:rate=25:duration=5 -f lavfi -i sine=frequency=440:duration=5"
+          ffmpeg -loglevel error $src -c:v libx264 -pix_fmt yuv420p -c:a aac media/h264.mp4
+          ffmpeg -loglevel error $src -c:v libx264 -pix_fmt yuv420p -c:a aac media/h264.mov
+          ffmpeg -loglevel error $src -c:v libvpx-vp9 -pix_fmt yuv420p -c:a libopus media/vp9.webm
+          ffmpeg -loglevel error $src -c:v libx264 -pix_fmt yuv420p -c:a ac3 media/h264.mkv
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: media
+          path: media
+
+  package:
+    needs: media
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            asset: simplex-desktop-ubuntu-22_04-x86_64.deb
+            libs: linux-x86_64
+            links: linux-x64
+            task: packageDeb
+          - os: macos-latest
+            asset: simplex-desktop-macos-aarch64.dmg
+            libs: mac-aarch64
+            links: macos-arm64
+            task: packageDmg
+          - os: macos-15-intel
+            asset: simplex-desktop-macos-x86_64.dmg
+            libs: mac-x86_64
+            links: macos-x64
+            task: packageDmg
+          - os: windows-latest
+            asset: simplex-desktop-windows-x86_64.msi
+            libs: windows-x86_64
+            links: windows-x64
+            task: packageMsi
+    defaults:
+      run:
+        shell: bash
+    env:
+      LIBS: apps/multiplatform/common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: media
+          path: ${{ runner.temp }}/media
+
+      - name: Take the core libraries of the released app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$APP_RELEASE" -R simplex-chat/simplex-chat -p "${{ matrix.asset }}" -D "$RUNNER_TEMP/release"
+          scripts/ci/vlc-app-test/unpack-app.sh "$RUNNER_TEMP/release/${{ matrix.asset }}" "$RUNNER_TEMP/released"
+          resources=$(cat "$RUNNER_TEMP/released/resources-dir")
+          mkdir -p "$LIBS"
+          find "$resources" -maxdepth 1 \( -type f -o -type l \) -exec cp -P {} "$LIBS/" \;
+          ls -la "$LIBS"
+
+      - name: Prepare VLC with the script of this branch
+        run: |
+          case "$RUNNER_OS" in
+            Linux) scripts/desktop/prepare-vlc-linux.sh ;;
+            macOS) scripts/desktop/prepare-vlc-mac.sh ;;
+            Windows) scripts/desktop/prepare-vlc-windows.sh ;;
+          esac
+          ls "$LIBS/vlc"
+          find "$LIBS/vlc" -name '*_plugin*' | wc -l
+
+      - name: Link the libraries as the release scripts do
+        run: |
+          mkdir -p apps/multiplatform/build/links
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp -R "$LIBS" apps/multiplatform/build/links/${{ matrix.links }}
+          else
+            ln -sfn "../../common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}/" apps/multiplatform/build/links/${{ matrix.links }}
+          fi
+          ls -la apps/multiplatform/build/links
+
+      - name: Package the desktop app of this branch
+        working-directory: apps/multiplatform
+        run: ./gradlew --no-daemon --console=plain -Psimplex.assets.dir=../../assets -Pkotlin.daemon.jvmargs=-Xmx4g ${{ matrix.task }} -x :desktop:cmakeBuildAndCopy
+
+      - name: Install the package
+        run: |
+          package=$(find apps/multiplatform/release/main -type f \( -name '*.deb' -o -name '*.dmg' -o -name '*.msi' \) | head -n 1)
+          ls -la "$package"
+          if [ "$RUNNER_OS" = Linux ]; then
+            dpkg-deb -c "$package" | grep -E 'resources/vlc/(vlc/)?(plugins/)?$|libvlc.so.5.6.1|plugins/codec/$'
+          fi
+          scripts/ci/vlc-app-test/unpack-app.sh "$package" "$RUNNER_TEMP/branch" install
+          echo "BRANCH_APP_BIN=$(cat "$RUNNER_TEMP/branch/bin")" >> "$GITHUB_ENV"
+          echo "BRANCH_APP_JARS=$(cat "$RUNNER_TEMP/branch/jars-dir")" >> "$GITHUB_ENV"
+          echo "BRANCH_APP_VLC=$(cat "$RUNNER_TEMP/branch/resources-dir")/vlc" >> "$GITHUB_ENV"
+
+      - name: Play the test media with the packaged app's vlcj and VLC
+        run: java -cp "$BRANCH_APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$BRANCH_APP_VLC" "$RUNNER_TEMP"/media/*
+
+      - name: Start the packaged app
+        if: ${{ !cancelled() }}
+        run: scripts/ci/vlc-app-test/start-app.sh "$BRANCH_APP_BIN" packaged-app
+
+      - name: Send and play a video in the packaged app's UI
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          sudo apt-get install -y xdotool openbox imagemagick tesseract-ocr sqlite3 fonts-dejavu-core ffmpeg
+          scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$BRANCH_APP_BIN")")" "$RUNNER_TEMP/smoke-test"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: results-${{ matrix.os }}
+          path: |
+            ${{ runner.temp }}/*.log
+            ${{ runner.temp }}/*.png
+            ${{ runner.temp }}/smoke-test
+          if-no-files-found: ignore
