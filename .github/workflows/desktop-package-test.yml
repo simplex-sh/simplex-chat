@@ -101,6 +101,17 @@ jobs:
         working-directory: apps/multiplatform
         run: ./gradlew --no-daemon --console=plain -Psimplex.assets.dir=../../assets -Pkotlin.daemon.jvmargs=-Xmx4g ${{ matrix.task }} -x :desktop:cmakeBuildAndCopy
 
+      - name: Pack the app folder
+        run: tar -czf "$RUNNER_TEMP/simplex-app.tar.gz" -C apps/multiplatform/release/main/app simplex
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: simplex-app-linux-x86_64
+          path: ${{ runner.temp }}/simplex-app.tar.gz
+          compression-level: 0
+          retention-days: 3
+          if-no-files-found: error
+
 
       - name: Install the package
         run: |
