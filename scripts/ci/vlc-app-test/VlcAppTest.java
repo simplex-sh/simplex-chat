@@ -22,8 +22,8 @@ public class VlcAppTest {
       System.load(new File(vlcDir, "libvlccore.dll").getAbsolutePath());
       System.load(new File(vlcDir, "libvlc.dll").getAbsolutePath());
     }
-    MediaPlayerFactory factory = new MediaPlayerFactory();
-    System.out.println("libVLC " + factory.application().version());
+    String vlcArgs = System.getProperty("vlc.args", "");
+    MediaPlayerFactory factory = vlcArgs.isEmpty() ? new MediaPlayerFactory() : new MediaPlayerFactory(vlcArgs.split(" "));    System.out.println("libVLC " + factory.application().version());
     int failures = 0;
     for (int i = 1; i < args.length; i++) {
       if (!play(factory, args[i])) failures++;
@@ -53,11 +53,12 @@ public class VlcAppTest {
     player.media().play(path);
     long deadline = System.currentTimeMillis() + TIMEOUT_MS;
     State state = player.status().state();
-    while (frames.get() < MIN_FRAMES && System.currentTimeMillis() < deadline && state != State.ERROR && state != State.ENDED) {
+    long time = player.status().time();
+    while ((frames.get() < MIN_FRAMES || time <= 0) && System.currentTimeMillis() < deadline && state != State.ERROR && state != State.ENDED) {
       Thread.sleep(POLL_MS);
       state = player.status().state();
+      time = player.status().time();
     }
-    long time = player.status().time();
     boolean played = frames.get() >= MIN_FRAMES && time > 0;
     System.out.printf("%s %s: %d frames of %dx%d, position %d ms, state %s, tracks %s%n",
       played ? "PASS" : "FAIL", new File(path).getName(), frames.get(), size[0], size[1], time, state, player.media().info().videoTracks());

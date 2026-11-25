@@ -38,6 +38,9 @@ compose_y=730
 paperclip_x=415
 message_x=700
 compose_area=976x200+390+500
+chat_area=976x620+390+80
+video_x=1105
+video_y=550
 mkdir -p "$UI_OUT"
 : > "$checks"
 if [ -n "${GITHUB_ENV:-}" ]; then
@@ -377,7 +380,7 @@ send_image() {
 
 send_video() {
   local video=${RUNNER_TEMP:-/tmp}/smoke-test-video.mp4 sent
-  ffmpeg -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=440 -t 2 \
+  ffmpeg -loglevel error -y -f lavfi -i testsrc=size=640x360:rate=25 -f lavfi -i sine=frequency=440 -t 8 \
     -c:v libx264 -pix_fmt yuv420p -c:a aac "$video"
   sent=$(sent_files "video_*.mp4")
   attach Video "$video" mp4
@@ -386,6 +389,28 @@ send_video() {
   "$ui" key Return
   check "mp4: the video is sent" sent_file "video_*.mp4" "$sent"
   "$ui" shot sent-mp4
+}
+
+chat_changed() {
+  local changed
+  convert "$(latest_shot "$1")" -crop "$chat_area" +repage "$UI_OUT/chat-$1.png"
+  convert "$(latest_shot "$2")" -crop "$chat_area" +repage "$UI_OUT/chat-$2.png"
+  changed=$(compare -metric AE -fuzz 10% "$UI_OUT/chat-$1.png" "$UI_OUT/chat-$2.png" null: 2>&1 || true)
+  changed=${changed%% *}
+  echo "pixels changed in the chat: $changed"
+  [ "${changed%%.*}" -gt 2000 ]
+}
+
+play_video() {
+  "$ui" scroll "$video_x" "$video_y" down 15
+  sleep 2
+  "$ui" shot video-before-play
+  "$ui" click "$video_x" "$video_y"
+  sleep 2
+  "$ui" shot video-playing-1
+  sleep 1
+  "$ui" shot video-playing-2
+  check "mp4: the sent video plays in the chat" chat_changed video-playing-1 video-playing-2
 }
 
 send_images() {
@@ -455,6 +480,7 @@ use_top_toolbar
 check_layout top
 send_images
 send_video
+play_video
 
 if grep -q '^FAIL' "$checks"; then
   fail "the smoke test failed checks: $(grep -c '^FAIL' "$checks") of $(grep -cE '^(PASS|FAIL)' "$checks")"

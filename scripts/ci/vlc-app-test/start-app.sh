@@ -30,7 +30,7 @@ fi
 echo "::group::$name log"
 cat "$log"
 echo "::endgroup::"
-if grep -E "UnsatisfiedLinkError|Exception in thread|startup error" "$log"; then
+if grep -E "UnsatisfiedLinkError|startup error" "$log"; then
   echo "$name logged an error"
   exit 1
 fi

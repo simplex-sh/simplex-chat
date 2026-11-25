@@ -110,6 +110,11 @@ jobs:
           ls "$app/resources/vlc"
           find "$app/resources/vlc" -name '*_plugin*' | wc -l
 
+      - name: Play the test media with the app's vlcj and the released VLC
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        run: java -Dvlc.args=--verbose=1 -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
+
       - name: Prepare VLC of this branch
         run: |
           mkdir -p apps/multiplatform/common/src/commonMain/cpp/desktop/libs/${{ matrix.libs }}
@@ -141,11 +146,24 @@ jobs:
 
       - name: Play the test media with the app's vlcj and VLC
         if: ${{ !cancelled() }}
-        run: java -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
+        run: java -Dvlc.args=--verbose=1 -cp "$APP_JARS/*" scripts/ci/vlc-app-test/VlcAppTest.java "$APP_VLC" "$RUNNER_TEMP"/media/*
 
       - name: Start the released app
         if: ${{ !cancelled() }}
         run: scripts/ci/vlc-app-test/start-app.sh "$APP_BIN" released-app
+
+      - name: Send and play a video in the released app's UI
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
+        run: |
+          sudo apt-get install -y xdotool openbox imagemagick tesseract-ocr sqlite3 fonts-dejavu-core ffmpeg
+          scripts/ci/desktop-linux/smoke-test.sh "$(dirname "$(dirname "$APP_BIN")")" "$RUNNER_TEMP/smoke-test"
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() && matrix.os == 'ubuntu-24.04' }}
+        with:
+          name: smoke-test
+          path: ${{ runner.temp }}/smoke-test
+          if-no-files-found: ignore
 
       - name: Build the app of this branch with the released libraries
         id: build
