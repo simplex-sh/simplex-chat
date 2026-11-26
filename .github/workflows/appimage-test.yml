@@ -1,0 +1,79 @@
+name: appimage-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - sh/appimage-7937
+
+permissions:
+  contents: read
+
+env:
+  APP_RELEASE: v7.1.4
+  APPIMAGE_EXTRACT_AND_RUN: 1
+
+jobs:
+  appimage:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Take the core libraries of the released AppImage
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "$APP_RELEASE" -R simplex-chat/simplex-chat -p simplex-desktop-x86_64.AppImage -D "$RUNNER_TEMP/release"
+          chmod +x "$RUNNER_TEMP/release/simplex-desktop-x86_64.AppImage"
+          (cd "$RUNNER_TEMP/release" && ./simplex-desktop-x86_64.AppImage --appimage-extract > /dev/null)
+          resources="$RUNNER_TEMP/release/squashfs-root/usr/lib/app/resources"
+          ls -la "$resources"
+          mkdir -p apps/multiplatform/build/links
+          cp -a "$resources" apps/multiplatform/build/links/linux-x64
+
+      - name: Build the app of this branch
+        working-directory: apps/multiplatform
+        run: ./gradlew --no-daemon --console=plain -Psimplex.assets.dir=../../assets -Pkotlin.daemon.jvmargs=-Xmx4g createDistributable -x :desktop:cmakeBuildAndCopy
+
+      - name: Make the AppImage
+        working-directory: apps/multiplatform/release/main/app
+        run: |
+          mkdir -p AppDir/usr
+          cd AppDir
+          cp -r ../simplex/{bin,lib} usr
+          cp usr/lib/simplex.png .
+          mkdir -p usr/share/{icons,metainfo,applications}
+          cp usr/lib/simplex.png usr/share/icons
+          ln -s usr/bin/simplex AppRun
+          distribute=$GITHUB_WORKSPACE/apps/multiplatform/desktop/src/jvmMain/resources/distribute
+          cp "$distribute"/*imple*.desktop chat.simplex.app.desktop
+          sed -i 's|^Exec=[^ ]*|Exec=simplex|' chat.simplex.app.desktop
+          sed -i 's|Icon=.*|Icon=simplex|g' chat.simplex.app.desktop
+          cp chat.simplex.app.desktop usr/share/applications/
+          cp "$distribute"/*.appdata.xml usr/share/metainfo
+          rm -f ./usr/lib/app/*skiko-awt-runtime-linux*
+          sed -i -e '/skiko-awt-runtime-linux/d' ./usr/lib/app/simplex.cfg
+          wget -q https://github.com/simplex-chat/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O ../appimagetool
+          wget -q https://github.com/simplex-chat/type2-runtime/releases/download/continuous/runtime-x86_64 -O ../runtime
+          chmod +x ../appimagetool ../runtime
+          ../appimagetool --no-appstream --runtime-file ../runtime . "$RUNNER_TEMP/simplex-desktop-pr7937-x86_64.AppImage"
+          ls -la "$RUNNER_TEMP"/*.AppImage
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: simplex-desktop-pr7937-x86_64.AppImage
+          path: ${{ runner.temp }}/simplex-desktop-pr7937-x86_64.AppImage
+          compression-level: 0
+          retention-days: 14
+          if-no-files-found: error
